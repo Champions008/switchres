@@ -33,7 +33,7 @@ endif
 
 # If the version is not set at make, read it from switchres.h
 ifeq ($(VERSION),)
-	VERSION:=$(shell grep -E "^\#define SWITCHRES_VERSION" switchres.h | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" )
+    VERSION:=$(shell grep -E "^\#define SWITCHRES_VERSION" switchres.h | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" )
 else
     CPPFLAGS += -DSWITCHRES_VERSION="\"$(VERSION)\""
 endif
@@ -42,6 +42,14 @@ VERSION_MINOR := $(word 2,$(subst ., ,$(VERSION)))
 VERSION_PATCH := $(word 3,$(subst ., ,$(VERSION)))
 
 $(info Switchres $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH))
+
+# Declare 'all' as the first target so it's the default goal when you run
+# `make` with no arguments. The recipe is defined further down (after the
+# conditional blocks that populate $(SRC), $(LIBS), etc.), but declaring
+# the target here ensures GNU Make picks it as the default even when the
+# Wayland block (which defines a `custom_video_wayland.o:` prerequisite
+# rule) is parsed before the recipe.
+all:
 
 # Linux
 ifeq  ($(PLATFORM),Linux)
@@ -67,6 +75,65 @@ else
     ifeq ($(SR_WITH_DRMHOOK),1)
         CPPFLAGS += -DSR_WITH_DRMHOOK
     endif
+endif
+
+# Wayland (KDE Output Management v2) and (WLROOTS Output Management) backends.
+# Requires: wayland-client >= 1.20, wayland-scanner at build time
+# Vendored protocol XMLs live in protocols/kde/ and protocols/wlroots/.
+HAS_VALID_WAYLAND := $(shell $(PKG_CONFIG) --silence-errors --libs "wayland-client >= 1.20"; echo $$?)
+HAS_WAYLAND_SCANNER := $(shell command -v wayland-scanner >/dev/null 2>&1 && echo yes)
+ifeq ($(HAS_VALID_WAYLAND),1)
+    $(info Switchres needs wayland-client >= 1.20. Wayland support is disabled)
+else ifneq ($(HAS_WAYLAND_SCANNER),yes)
+    $(info Switchres needs wayland-scanner at build time. Wayland support is disabled)
+else
+    $(info Wayland support enabled)
+
+    KDE_PROTOCOL_DIR = protocols/kde
+    WLROOTS_PROTOCOL_DIR = protocols/wlroots
+    WAYLAND_SCANNER ?= wayland-scanner
+
+    CPPFLAGS += -DSR_WITH_KDE -DSR_WITH_WLROOTS
+    CPPFLAGS += -I$(KDE_PROTOCOL_DIR) -I$(WLROOTS_PROTOCOL_DIR)
+    EXTRA_LIBS += wayland-client
+    SRC += custom_video_kde.cpp custom_video_wlroots.cpp
+
+    KDE_PROTOCOLS = \
+        $(KDE_PROTOCOL_DIR)/kde-output-device-v2 \
+        $(KDE_PROTOCOL_DIR)/kde-output-management-v2
+
+    WLROOTS_PROTOCOLS = \
+        $(WLROOTS_PROTOCOL_DIR)/wlr-output-management-unstable-v1
+
+    # wayland-scanner emits both a header and a C source file per XML.
+    # We compile the C source into the wayland object via an include in
+    # custom_video_kde.cpp (wrapped in extern "C").
+    KDE_GEN_HEADERS = $(addsuffix -client.h, $(KDE_PROTOCOLS))
+    KDE_GEN_SOURCES = $(addsuffix -client-protocol.c, $(KDE_PROTOCOLS))
+
+    WLROOTS_GEN_HEADERS = $(addsuffix -client.h, $(WLROOTS_PROTOCOLS))
+    WLROOTS_GEN_SOURCES = $(addsuffix -client-protocol.c, $(WLROOTS_PROTOCOLS))
+
+    $(KDE_PROTOCOL_DIR)/%-client.h: $(KDE_PROTOCOL_DIR)/%.xml
+	$(WAYLAND_SCANNER) client-header $< $@
+
+    $(KDE_PROTOCOL_DIR)/%-client-protocol.c: $(KDE_PROTOCOL_DIR)/%.xml
+	$(WAYLAND_SCANNER) private-code $< $@
+
+    $(WLROOTS_PROTOCOL_DIR)/%-client.h: $(WLROOTS_PROTOCOL_DIR)/%.xml
+	$(WAYLAND_SCANNER) client-header $< $@
+
+    $(WLROOTS_PROTOCOL_DIR)/%-client-protocol.c: $(WLROOTS_PROTOCOL_DIR)/%.xml
+	$(WAYLAND_SCANNER) private-code $< $@
+
+    # All object files that transitively include custom_video_kde.h
+    # (via custom_video.cpp's #include of the header) must depend on the
+    # generated protocol headers, so make runs wayland-scanner before
+    # compiling any of them. Without this, a clean build fails because
+    # custom_video.o is compiled before the generated headers exist.
+    $(OBJS): $(KDE_GEN_HEADERS) $(WLROOTS_GEN_HEADERS)
+    custom_video_kde.o: $(KDE_GEN_HEADERS) $(KDE_GEN_SOURCES)
+    custom_video_wlroots.o: $(WLROOTS_GEN_HEADERS) $(WLROOTS_GEN_SOURCES)
 endif
 
 # SDL2 misses a test for drm as drm.h is required
@@ -124,6 +191,8 @@ endef
 %.o : %.cpp
 	$(FINAL_CXX) -c $(CPPFLAGS) $< -o $@
 
+# all: (recipe) - the target was declared at the top of the file to make
+# it the default goal; this adds the prerequisites and the build recipe.
 all: $(SRC:.cpp=.o) $(MAIN).cpp $(TARGET_LIB) prepare_pkg_config
 	@echo $(OSFLAG)
 	$(FINAL_CXX) $(CPPFLAGS) $(CXXFLAGS) $(SRC:.cpp=.o) $(MAIN).cpp $(LIBS) -o $(STANDALONE)
@@ -142,6 +211,12 @@ $(GRID):
 clean:
 	$(REMOVE) $(OBJS) $(STANDALONE) $(TARGET_LIB).*
 	$(REMOVE) switchres.pc
+	$(REMOVE) protocols/kde/kde-output-device-v2-client.h
+	$(REMOVE) protocols/kde/kde-output-device-v2-client-protocol.c
+	$(REMOVE) protocols/kde/kde-output-management-v2-client.h
+	$(REMOVE) protocols/kde/kde-output-management-v2-client-protocol.c
+	$(REMOVE) protocols/wlroots/wlr-output-management-unstable-v1-client.h
+	$(REMOVE) protocols/wlroots/wlr-output-management-unstable-v1-client-protocol.c
 
 prepare_pkg_config:
 	$(file > switchres.pc,$(SR_PKG_CONFIG))
