@@ -282,22 +282,33 @@ kde_timing::~kde_timing()
 
 void kde_timing::release_all_outputs()
 {
-	std::lock_guard<std::mutex> lock(m_mutex);
-	for (auto *out : m_outputs)
-	{
-		if (!out) continue;
-		if (out->proxy)
-		{
-			uint32_t v = kde_output_device_v2_get_version(out->proxy);
-			if (v >= 21)
-				kde_output_device_v2_release(out->proxy);
-			else
-				kde_output_device_v2_destroy(out->proxy);
-		}
-		delete out;
-	}
-	m_outputs.clear();
-	m_desktop_output = nullptr;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto *out : m_outputs)
+    {
+        if (!out) continue;
+        // Destroy mode proxies first — the compositor may not send
+        // mode.removed for each mode when the output is released, so
+        // we destroy them explicitly here to avoid leaking client-side
+        // wl_proxy objects.
+        for (auto &mi : out->modes)
+        {
+                if (mi.proxy)
+                        kde_output_device_mode_v2_destroy(mi.proxy);
+        }
+        out->modes.clear();
+        // Now release the output proxy.
+        if (out->proxy)
+        {
+            uint32_t v = kde_output_device_v2_get_version(out->proxy);
+            if (v >= 21)
+                    kde_output_device_v2_release(out->proxy);
+            else
+                    kde_output_device_v2_destroy(out->proxy);
+        }
+        delete out;
+    }
+    m_outputs.clear();
+    m_desktop_output = nullptr;
 }
 
 // =========================================================================
