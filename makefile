@@ -43,14 +43,6 @@ VERSION_PATCH := $(word 3,$(subst ., ,$(VERSION)))
 
 $(info Switchres $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH))
 
-# Declare 'all' as the first target so it's the default goal when you run
-# `make` with no arguments. The recipe is defined further down (after the
-# conditional blocks that populate $(SRC), $(LIBS), etc.), but declaring
-# the target here ensures GNU Make picks it as the default even when the
-# Wayland block (which defines a `custom_video_wayland.o:` prerequisite
-# rule) is parsed before the recipe.
-all:
-
 # Linux
 ifeq  ($(PLATFORM),Linux)
 SRC += display_linux.cpp
@@ -77,9 +69,13 @@ else
     endif
 endif
 
-# Wayland (KDE Output Management v2) and (WLROOTS Output Management) backends.
+# Wayland (KDE + wlroots) switchres backend
 # Requires: wayland-client >= 1.20, wayland-scanner at build time
 # Vendored protocol XMLs live in protocols/kde/ and protocols/wlroots/.
+KDE_PROTOCOL_DIR = protocols/kde
+WLROOTS_PROTOCOL_DIR = protocols/wlroots
+WAYLAND_SCANNER ?= wayland-scanner
+
 HAS_VALID_WAYLAND := $(shell $(PKG_CONFIG) --silence-errors --libs "wayland-client >= 1.20"; echo $$?)
 HAS_WAYLAND_SCANNER := $(shell command -v wayland-scanner >/dev/null 2>&1 && echo yes)
 ifeq ($(HAS_VALID_WAYLAND),1)
@@ -88,11 +84,6 @@ else ifneq ($(HAS_WAYLAND_SCANNER),yes)
     $(info Switchres needs wayland-scanner at build time. Wayland support is disabled)
 else
     $(info Wayland support enabled)
-
-    KDE_PROTOCOL_DIR = protocols/kde
-    WLROOTS_PROTOCOL_DIR = protocols/wlroots
-    WAYLAND_SCANNER ?= wayland-scanner
-
     CPPFLAGS += -DSR_WITH_KDE -DSR_WITH_WLROOTS
     CPPFLAGS += -I$(KDE_PROTOCOL_DIR) -I$(WLROOTS_PROTOCOL_DIR)
     EXTRA_LIBS += wayland-client
@@ -105,35 +96,14 @@ else
     WLROOTS_PROTOCOLS = \
         $(WLROOTS_PROTOCOL_DIR)/wlr-output-management-unstable-v1
 
-    # wayland-scanner emits both a header and a C source file per XML.
-    # We compile the C source into the wayland object via an include in
-    # custom_video_kde.cpp (wrapped in extern "C").
     KDE_GEN_HEADERS = $(addsuffix -client.h, $(KDE_PROTOCOLS))
     KDE_GEN_SOURCES = $(addsuffix -client-protocol.c, $(KDE_PROTOCOLS))
-
     WLROOTS_GEN_HEADERS = $(addsuffix -client.h, $(WLROOTS_PROTOCOLS))
     WLROOTS_GEN_SOURCES = $(addsuffix -client-protocol.c, $(WLROOTS_PROTOCOLS))
 
-    $(KDE_PROTOCOL_DIR)/%-client.h: $(KDE_PROTOCOL_DIR)/%.xml
-	$(WAYLAND_SCANNER) client-header $< $@
-
-    $(KDE_PROTOCOL_DIR)/%-client-protocol.c: $(KDE_PROTOCOL_DIR)/%.xml
-	$(WAYLAND_SCANNER) private-code $< $@
-
-    $(WLROOTS_PROTOCOL_DIR)/%-client.h: $(WLROOTS_PROTOCOL_DIR)/%.xml
-	$(WAYLAND_SCANNER) client-header $< $@
-
-    $(WLROOTS_PROTOCOL_DIR)/%-client-protocol.c: $(WLROOTS_PROTOCOL_DIR)/%.xml
-	$(WAYLAND_SCANNER) private-code $< $@
-
-    # All object files that transitively include custom_video_kde.h
-    # (via custom_video.cpp's #include of the header) must depend on the
-    # generated protocol headers, so make runs wayland-scanner before
-    # compiling any of them. Without this, a clean build fails because
-    # custom_video.o is compiled before the generated headers exist.
-    $(OBJS): $(KDE_GEN_HEADERS) $(WLROOTS_GEN_HEADERS)
-    custom_video_kde.o: $(KDE_GEN_HEADERS) $(KDE_GEN_SOURCES)
-    custom_video_wlroots.o: $(WLROOTS_GEN_HEADERS) $(WLROOTS_GEN_SOURCES)
+    ALL_OBJS_DEPS += $(KDE_GEN_HEADERS) $(WLROOTS_GEN_HEADERS)
+    KDE_OBJS_DEPS += $(KDE_GEN_HEADERS) $(KDE_GEN_SOURCES)
+    WLROOTS_OBJS_DEPS += $(WLROOTS_GEN_HEADERS) $(WLROOTS_GEN_SOURCES)
 endif
 
 # SDL2 misses a test for drm as drm.h is required
@@ -191,11 +161,28 @@ endef
 %.o : %.cpp
 	$(FINAL_CXX) -c $(CPPFLAGS) $< -o $@
 
-# all: (recipe) - the target was declared at the top of the file to make
-# it the default goal; this adds the prerequisites and the build recipe.
+# Pattern rules for generating protocol headers/sources from XMLs.
+# These are outside the conditional block so they're always defined.
+# They only fire when a prerequisite (KDE_GEN_HEADERS etc.) requests them.
+$(KDE_PROTOCOL_DIR)/%-client.h: $(KDE_PROTOCOL_DIR)/%.xml
+	$(WAYLAND_SCANNER) client-header $< $@
+$(KDE_PROTOCOL_DIR)/%-client-protocol.c: $(KDE_PROTOCOL_DIR)/%.xml
+	$(WAYLAND_SCANNER) private-code $< $@
+$(WLROOTS_PROTOCOL_DIR)/%-client.h: $(WLROOTS_PROTOCOL_DIR)/%.xml
+	$(WAYLAND_SCANNER) client-header $< $@
+$(WLROOTS_PROTOCOL_DIR)/%-client-protocol.c: $(WLROOTS_PROTOCOL_DIR)/%.xml
+	$(WAYLAND_SCANNER) private-code $< $@
+
 all: $(SRC:.cpp=.o) $(MAIN).cpp $(TARGET_LIB) prepare_pkg_config
 	@echo $(OSFLAG)
 	$(FINAL_CXX) $(CPPFLAGS) $(CXXFLAGS) $(SRC:.cpp=.o) $(MAIN).cpp $(LIBS) -o $(STANDALONE)
+
+# Wayland: explicit prerequisites for object files that include generated
+# protocol headers. These MUST come after 'all:' so they don't become the
+# default goal. They add extra prerequisites without overriding the recipe.
+custom_video.o: $(ALL_OBJS_DEPS)
+custom_video_kde.o: $(KDE_OBJS_DEPS)
+custom_video_wlroots.o: $(WLROOTS_OBJS_DEPS)
 
 $(TARGET_LIB): $(OBJS)
 	$(FINAL_CXX) $(LDFLAGS) $(CPPFLAGS) $(LIB_CPPFLAGS) -o $@.$(DYNAMIC_LIB_EXT) $^
