@@ -285,7 +285,7 @@ bool wlroots_timing::init()
 		std::lock_guard<std::mutex> lock(m_mutex);
 
 		log_verbose("WLROOTS: <%d> (init) %d head(s) discovered\n",
-		            m_id, (int)m_outputs.size());
+			    m_id, (int)m_outputs.size());
 
 		// Diagnostic: print mode count for each head BEFORE selection
 		for (auto *out : m_outputs)
@@ -310,14 +310,14 @@ bool wlroots_timing::init()
 			if (!out || !out->proxy) continue;
 
 			log_verbose("WLROOTS: <%d> (init) head '%s' enabled=%d modes=%d\n",
-			            m_id, out->name.c_str(),
-			            (int)out->enabled, (int)out->modes.size());
+				    m_id, out->name.c_str(),
+				    (int)out->enabled, (int)out->modes.size());
 
 			if (out->name.empty())
 				continue;
 
 			bool name_match = (!strcmp(m_device_name, "auto") ||
-			                   !strcmp(m_device_name, out->name.c_str()));
+					   !strcmp(m_device_name, out->name.c_str()));
 			if (name_match && out->enabled && out->current_mode)
 			{
 				if (!chosen || !strcmp(m_device_name, "auto"))
@@ -356,9 +356,9 @@ bool wlroots_timing::init()
 			m_managed = 1;
 			detected = true;
 			log_verbose("WLROOTS: <%d> (init) [SELECTED] head '%s' (desktop mode %p, %ux%u@%.3f)\n",
-			             m_id, chosen->name.c_str(),
-			             (void *)m_desktop_mode, m_desktop_width, m_desktop_height,
-			             m_desktop_refresh_mhz / 1000.0);
+				     m_id, chosen->name.c_str(),
+				     (void *)m_desktop_mode, m_desktop_width, m_desktop_height,
+				     m_desktop_refresh_mhz / 1000.0);
 		}
 	}
 
@@ -423,9 +423,9 @@ bool wlroots_timing::pump_until_apply_done()
 			log_error("WLROOTS: <%d> (apply) [ERROR] configuration cancelled (stale serial)\n", m_id);
 		else
 			log_error("WLROOTS: <%d> (apply) [ERROR] configuration failed: %s\n",
-			          m_id, m_apply_failure_reason.empty()
-			                 ? "(no reason given)"
-			                 : m_apply_failure_reason.c_str());
+				  m_id, m_apply_failure_reason.empty()
+					 ? "(no reason given)"
+					 : m_apply_failure_reason.c_str());
 	}
 	return m_apply_ok;
 }
@@ -435,13 +435,13 @@ bool wlroots_timing::pump_until_apply_done()
 // =========================================================================
 
 void wlroots_timing::registry_global(void *data, wl_registry *r,
-                                      uint32_t name, const char *iface, uint32_t version)
+				      uint32_t name, const char *iface, uint32_t version)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	if (!iface) return;
 
 	log_verbose("WLROOTS: <%d> (registry_global) iface=%s name=%u version=%u\n",
-	            self->m_id, iface, name, version);
+		    self->m_id, iface, name, version);
 
 	if (strcmp(iface, "zwlr_output_manager_v1") == 0)
 	{
@@ -454,19 +454,19 @@ void wlroots_timing::registry_global(void *data, wl_registry *r,
 		if (v < 4)
 		{
 			log_error("WLROOTS: <%d> (registry_global) [ERROR] zwlr_output_manager_v1 advertised at v%u (need >=4)\n",
-			          self->m_id, v);
+				  self->m_id, v);
 			return;
 		}
 		self->m_manager =
 		    (zwlr_output_manager_v1 *)wl_registry_bind(r, name,
-		        &zwlr_output_manager_v1_interface, v);
+			&zwlr_output_manager_v1_interface, v);
 	}
 	// We don't bind anything else here. Heads and modes come from the
 	// manager's events, not from wl_registry_bind.
 }
 
 void wlroots_timing::registry_global_remove(void * /*data*/, wl_registry * /*r*/,
-                                             uint32_t /*name*/)
+					     uint32_t /*name*/)
 {
 	// No-op. The only global we bind (zwlr_output_manager_v1) is
 	// persistent for the compositor's lifetime and won't be removed
@@ -479,7 +479,7 @@ void wlroots_timing::registry_global_remove(void * /*data*/, wl_registry * /*r*/
 // =========================================================================
 
 void wlroots_timing::manager_head(void *data, zwlr_output_manager_v1 * /*mgr*/,
-                                   zwlr_output_head_v1 *head)
+				   zwlr_output_head_v1 *head)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	if (!head) return;
@@ -495,11 +495,11 @@ void wlroots_timing::manager_head(void *data, zwlr_output_manager_v1 * /*mgr*/,
 	zwlr_output_head_v1_add_listener(head, &head_listener, self);
 	self->m_outputs.push_back(out);
 	log_verbose("WLROOTS: <%d> (manager_head) new head proxy %p (total: %zu)\n",
-	            self->m_id, (void *)head, self->m_outputs.size());
+		    self->m_id, (void *)head, self->m_outputs.size());
 }
 
 void wlroots_timing::manager_done(void *data, zwlr_output_manager_v1 * /*mgr*/,
-                                   uint32_t serial)
+				   uint32_t serial)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -525,14 +525,14 @@ void wlroots_timing::manager_done(void *data, zwlr_output_manager_v1 * /*mgr*/,
 	}
 
 	log_verbose("WLROOTS: <%d> (manager_done) serial=%u, renumbered modes\n",
-	            self->m_id, serial);
+		    self->m_id, serial);
 }
 
 void wlroots_timing::manager_finished(void *data, zwlr_output_manager_v1 *mgr)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	log_verbose("WLROOTS: <%d> (manager_finished) manager retiring\n",
-	            self->m_id);
+		    self->m_id);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
 	if (self->m_manager == mgr)
 		self->m_manager = nullptr;
@@ -555,7 +555,7 @@ wlroots_output *wlroots_timing::find_output_by_proxy_locked(
 }
 
 void wlroots_timing::head_name(void *data, zwlr_output_head_v1 *head,
-                               const char *name)
+			       const char *name)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -564,7 +564,7 @@ void wlroots_timing::head_name(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_description(void *data, zwlr_output_head_v1 *head,
-                                       const char *description)
+				       const char *description)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -573,7 +573,7 @@ void wlroots_timing::head_description(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_physical_size(void *data, zwlr_output_head_v1 *head,
-                                         int32_t width, int32_t height)
+					 int32_t width, int32_t height)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -586,7 +586,7 @@ void wlroots_timing::head_physical_size(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_mode(void *data, zwlr_output_head_v1 *head,
-                               zwlr_output_mode_v1 *mode)
+			       zwlr_output_mode_v1 *mode)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	if (!mode) return;
@@ -612,7 +612,7 @@ void wlroots_timing::head_mode(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_enabled(void *data, zwlr_output_head_v1 *head,
-                                   int32_t enabled)
+				   int32_t enabled)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -621,7 +621,7 @@ void wlroots_timing::head_enabled(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_current_mode(void *data, zwlr_output_head_v1 *head,
-                                        zwlr_output_mode_v1 *mode)
+					zwlr_output_mode_v1 *mode)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -633,7 +633,7 @@ void wlroots_timing::head_current_mode(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_position(void *data, zwlr_output_head_v1 *head,
-                                    int32_t x, int32_t y)
+				    int32_t x, int32_t y)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -642,7 +642,7 @@ void wlroots_timing::head_position(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_transform(void *data, zwlr_output_head_v1 *head,
-                                     int32_t transform)
+				     int32_t transform)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -651,7 +651,7 @@ void wlroots_timing::head_transform(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_scale(void *data, zwlr_output_head_v1 *head,
-                                wl_fixed_t scale)
+				wl_fixed_t scale)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -712,7 +712,7 @@ void wlroots_timing::head_finished(void *data, zwlr_output_head_v1 *head)
 }
 
 void wlroots_timing::head_make(void *data, zwlr_output_head_v1 *head,
-                               const char *make)
+			       const char *make)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -721,7 +721,7 @@ void wlroots_timing::head_make(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_model(void *data, zwlr_output_head_v1 *head,
-                                 const char *model)
+				 const char *model)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -730,7 +730,7 @@ void wlroots_timing::head_model(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_serial_number(void *data, zwlr_output_head_v1 *head,
-                                         const char *serial)
+					 const char *serial)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -739,8 +739,8 @@ void wlroots_timing::head_serial_number(void *data, zwlr_output_head_v1 *head,
 }
 
 void wlroots_timing::head_adaptive_sync(void * /*data*/,
-                                         zwlr_output_head_v1 * /*head*/,
-                                         uint32_t /*state*/)
+					 zwlr_output_head_v1 * /*head*/,
+					 uint32_t /*state*/)
 {
 	// We don't currently care about adaptive sync (VRR) state.
 }
@@ -764,7 +764,7 @@ wlroots_mode_info *wlroots_timing::find_mode_info_locked(
 }
 
 void wlroots_timing::mode_size(void *data, zwlr_output_mode_v1 *mode,
-                               int32_t w, int32_t h)
+			       int32_t w, int32_t h)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -773,7 +773,7 @@ void wlroots_timing::mode_size(void *data, zwlr_output_mode_v1 *mode,
 }
 
 void wlroots_timing::mode_refresh(void *data, zwlr_output_mode_v1 *mode,
-                                  int32_t refresh_mhz)
+				  int32_t refresh_mhz)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -843,7 +843,7 @@ void wlroots_timing::mode_finished(void *data, zwlr_output_mode_v1 *mode)
 // =========================================================================
 
 void wlroots_timing::cfg_succeeded(void *data,
-                                    zwlr_output_configuration_v1 * /*cfg*/)
+				    zwlr_output_configuration_v1 * /*cfg*/)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -855,7 +855,7 @@ void wlroots_timing::cfg_succeeded(void *data,
 }
 
 void wlroots_timing::cfg_failed(void *data,
-                                 zwlr_output_configuration_v1 * /*cfg*/)
+				 zwlr_output_configuration_v1 * /*cfg*/)
 {
 	auto *self = static_cast<wlroots_timing *>(data);
 	std::lock_guard<std::mutex> lock(self->m_mutex);
@@ -867,7 +867,7 @@ void wlroots_timing::cfg_failed(void *data,
 }
 
 void wlroots_timing::cfg_cancelled(void *data,
-                                    zwlr_output_configuration_v1 * /*cfg*/)
+				    zwlr_output_configuration_v1 * /*cfg*/)
 {
 	// Sent if the compositor cancels the configuration because the state
 	// of an output changed and the client has outdated information (e.g.
@@ -893,7 +893,7 @@ void wlroots_timing::cfg_cancelled(void *data,
 // =========================================================================
 
 void wlroots_timing::modeline_from_mode_info(const wlroots_mode_info *mi,
-                                             modeline *out)
+					     modeline *out)
 {
 	out->platform_data = (uintptr_t)mi->proxy;
 	out->id = mi->id;
@@ -916,7 +916,7 @@ void wlroots_timing::modeline_from_mode_info(const wlroots_mode_info *mi,
 // =========================================================================
 
 void wlroots_timing::modeline_from_custom_entry(const custom_mode_entry *e,
-                                                modeline *out)
+						modeline *out)
 {
 	*out = e->ml;                         // copy the full modeline
 	out->platform_data = 0;               // no proxy - signals custom mode
@@ -1107,7 +1107,7 @@ bool wlroots_timing::apply_configuration_for_mode(
 		if (was_cancelled)
 		{
 			log_verbose("WLROOTS: <%d> (apply) serial stale (cancelled), roundtripping for fresh serial (attempt %d)\n",
-			            m_id, attempt + 1);
+				    m_id, attempt + 1);
 			wl_display_roundtrip(m_display);
 			continue;
 		}
@@ -1157,8 +1157,8 @@ bool wlroots_timing::add_mode(modeline *mode)
 	}
 
 	log_verbose("WLROOTS: <%d> (add_mode) %dx%d@%.3f pclock=%llu\n",
-	            m_id, mode->hactive, mode->vactive, mode->vfreq,
-	            (unsigned long long)mode->pclock);
+		    m_id, mode->hactive, mode->vactive, mode->vfreq,
+		    (unsigned long long)mode->pclock);
 
 	custom_mode_entry entry;
 	entry.ml = *mode;
@@ -1317,8 +1317,8 @@ bool wlroots_timing::set_timing(modeline *mode)
 			if (m_desktop_output && (m_desktop_width || m_desktop_height))
 			{
 				log_verbose("WLROOTS: <%d> (set_timing) desktop mode proxy gone, searching by %ux%u@%.3f\n",
-				            m_id, m_desktop_width, m_desktop_height,
-				            m_desktop_refresh_mhz / 1000.0);
+					    m_id, m_desktop_width, m_desktop_height,
+					    m_desktop_refresh_mhz / 1000.0);
 				for (const auto &mi : m_desktop_output->modes)
 				{
 					if (mi.width == m_desktop_width &&
@@ -1327,7 +1327,7 @@ bool wlroots_timing::set_timing(modeline *mode)
 					{
 						target = mi.proxy;
 						log_verbose("WLROOTS: <%d> (set_timing) found desktop mode by w/h/r: %p\n",
-						            m_id, (void *)target);
+							    m_id, (void *)target);
 						break;
 					}
 				}
@@ -1354,37 +1354,45 @@ bool wlroots_timing::set_timing(modeline *mode)
 			if (!find_mode_by_proxy(target))
 			{
 				log_verbose("WLROOTS: <%d> (set_timing) proxy %p not in current list, searching by id=%d w=%d h=%d r=%d\n",
-				        m_id, (void *)target, mode->id, mode->width, mode->height, mode->refresh);
+					m_id, (void *)target, mode->id, mode->width, mode->height, mode->refresh);
 				target = nullptr;   // fall through to search
 			}
 		}
 		if (!target)
 		{
-			// The proxy was destroyed, or this is a custom mode
-			// (platform_data == 0). First, try to find an advertised
-			// mode matching by id, then by width/height/refresh.
-			if (m_desktop_output)
+			// platform_data == 0 means this is a custom mode that
+			// was registered via add_mode(). Skip the advertised
+			// mode list search entirely — custom modes are NOT
+			// in the compositor's mode list. Go directly to
+			// our custom mode cache.
+			if (mode->platform_data != 0)
 			{
-				std::lock_guard<std::mutex> lock(m_mutex);
-				for (const auto &mi : m_desktop_output->modes)
+				// The proxy was stale. Try to find an
+				// advertised mode matching by id, then by
+				// width/height/refresh.
+				if (m_desktop_output)
 				{
-					// Try id match first
-					if (mode->id != 0 && mi.id == mode->id)
+					std::lock_guard<std::mutex> lock(m_mutex);
+					for (const auto &mi : m_desktop_output->modes)
 					{
-						target = mi.proxy;
-						log_verbose("WLROOTS: <%d> (set_timing) found mode by id=%d: %p\n",
-						        m_id, mi.id, (void *)target);
-						break;
-					}
-					// Fall back to width/height/refresh
-					if (mi.width == (uint32_t)mode->width &&
-					    mi.height == (uint32_t)mode->height &&
-					    (int)(mi.refresh_mhz / 1000) == (int)mode->refresh)
-					{
-						target = mi.proxy;
-						log_verbose("WLROOTS: <%d> (set_timing) found mode by w/h/r: %p\n",
-						        m_id, (void *)target);
-						break;
+						// Try id match first
+						if (mode->id != 0 && mi.id == mode->id)
+						{
+							target = mi.proxy;
+							log_verbose("WLROOTS: <%d> (set_timing) found mode by id=%d: %p\n",
+								m_id, mi.id, (void *)target);
+							break;
+						}
+						// Fall back to width/height/refresh
+						if (mi.width == (uint32_t)mode->width &&
+						    mi.height == (uint32_t)mode->height &&
+						    (int)(mi.refresh_mhz / 1000) == (int)mode->refresh)
+						{
+							target = mi.proxy;
+							log_verbose("WLROOTS: <%d> (set_timing) found mode by w/h/r: %p\n",
+								m_id, (void *)target);
+							break;
+						}
 					}
 				}
 			}
@@ -1424,10 +1432,10 @@ bool wlroots_timing::set_timing(modeline *mode)
 		target ? 0 : custom_refresh_mhz);
 
 	bool ok = apply_configuration_for_mode(target,
-	                                       custom_w, custom_h, custom_refresh_mhz,
-	                                       m_desktop_output->x,
-	                                       m_desktop_output->y,
-	                                       m_desktop_output->transform);
+					       custom_w, custom_h, custom_refresh_mhz,
+					       m_desktop_output->x,
+					       m_desktop_output->y,
+					       m_desktop_output->transform);
 	if (ok)
 		log_verbose("WLROOTS: <%d> (set_timing) applied\n", m_id);
 	return ok;
