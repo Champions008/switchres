@@ -406,6 +406,18 @@ bool kde_timing::init()
 						m_desktop_vsync_end     = mi.cvt_vsync_end;
 						m_desktop_vtotal        = mi.cvt_vtotal;
 						m_desktop_cvt_flags     = mi.cvt_flags;
+						// If the desktop mode is a custom mode (flags & 0x1),
+                        // add it to m_custom_modes so set_custom_modes
+                        // preserves it. Without this, add_mode() would
+                        // replace the custom mode list and delete the
+                        // desktop mode, making it impossible to restore.
+                        if (mi.flags & 0x1)  // custom flag
+                        {
+                            custom_mode_entry entry;
+                            modeline_from_mode_info(&mi, &entry.ml);
+                            m_custom_modes.push_back(entry);
+                            log_verbose("KDE: <%d> (init) desktop mode is custom, preserving in m_custom_modes\n", m_id);
+                        }
 						break;
 					}
 				}
