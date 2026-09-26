@@ -292,13 +292,29 @@ private:
 	uint32_t m_desktop_cvt_flags = 0;
 
 	// The set of custom modes we have registered with the compositor.
-	// Because set_custom_modes is a *replacement* operation (not
-	// incremental), we keep this list and re-send it in full on every
-	// add/delete.
+    // Because set_custom_modes is a *replacement* operation (not
+    // incremental), we keep this list and re-send it in full on every
+    // add/delete.
+    //
+    // is_preserved marks entries captured at init() time from the
+    // compositor's advertised list (every mode with flags & 0x1).
+    // delete_mode() and add_mode()'s duplicate-check both skip
+    // is_preserved entries — the user can neither delete nor "re-add"
+    // a mode the compositor was already advertising before we connected.
+    // This protects:
+    //   - the desktop mode (when it's itself a custom mode), so the
+    //     protocol's set_custom_modes replace semantics don't wipe it
+    //     out from under us
+    //   - any other custom modes the user set up via other tools
+    //     (KDE display settings, a previous switchres run with
+    //     keep_changes=true, another Wayland client) — without this,
+    //     our first add_mode would wipe out the user's pre-existing
+    //     custom mode configuration
 	struct custom_mode_entry
 	{
 		modeline ml;                  // copy of the requested modeline
 		kde_output_device_mode_v2 *proxy = nullptr;  // matched proxy after apply
+		bool is_preserved = false;    // true = captured at init, never delete
 	};
 	std::vector<custom_mode_entry> m_custom_modes;
 

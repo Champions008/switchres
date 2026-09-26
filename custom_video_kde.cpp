@@ -385,43 +385,69 @@ bool kde_timing::init()
 			// compositor destroys the proxy during set_custom_modes,
 			// we can find the mode again by matching width/height/refresh.
 			if (m_desktop_mode)
-			{
-				for (const auto &mi : chosen->modes)
-				{
-					if (mi.proxy == m_desktop_mode)
-					{
-						m_desktop_width       = mi.width;
-						m_desktop_height      = mi.height;
-						m_desktop_refresh_mhz = mi.refresh_mhz;
-						// Cache full CVT timing
-						// for unambiguous mode
-						// matching (handles
-						// duplicate resolutions
-						// with different timings).
-						m_desktop_dot_clock_khz = mi.cvt_dot_clock_khz;
-						m_desktop_hsync_start   = mi.cvt_hsync_start;
-						m_desktop_hsync_end     = mi.cvt_hsync_end;
-						m_desktop_htotal        = mi.cvt_htotal;
-						m_desktop_vsync_start   = mi.cvt_vsync_start;
-						m_desktop_vsync_end     = mi.cvt_vsync_end;
-						m_desktop_vtotal        = mi.cvt_vtotal;
-						m_desktop_cvt_flags     = mi.cvt_flags;
-						// If the desktop mode is a custom mode (flags & 0x1),
-                        // add it to m_custom_modes so set_custom_modes
-                        // preserves it. Without this, add_mode() would
-                        // replace the custom mode list and delete the
-                        // desktop mode, making it impossible to restore.
-                        if (mi.flags & 0x1)  // custom flag
-                        {
-                            custom_mode_entry entry;
-                            modeline_from_mode_info(&mi, &entry.ml);
-                            m_custom_modes.push_back(entry);
-                            log_verbose("KDE: <%d> (init) desktop mode is custom, preserving in m_custom_modes\n", m_id);
-                        }
-						break;
-					}
-				}
-			}
+            {
+                // Pass 1: cache the desktop mode's CVT timing.
+                // Used by set_timing(MODE_DESKTOP) as a fallback
+                // search key if the compositor destroys the
+                // desktop mode proxy during a set_custom_modes
+                // round-trip (full CVT match handles duplicate
+                // resolutions with different timings, e.g. CVT
+                // vs CVT-RB).
+                for (const auto &mi : chosen->modes)
+                {
+                    if (mi.proxy == m_desktop_mode)
+                    {
+                        m_desktop_width       = mi.width;
+                        m_desktop_height      = mi.height;
+                        m_desktop_refresh_mhz = mi.refresh_mhz;
+                        m_desktop_dot_clock_khz = mi.cvt_dot_clock_khz;
+                        m_desktop_hsync_start   = mi.cvt_hsync_start;
+                        m_desktop_hsync_end     = mi.cvt_hsync_end;
+                        m_desktop_htotal        = mi.cvt_htotal;
+                        m_desktop_vsync_start   = mi.cvt_vsync_start;
+                        m_desktop_vsync_end     = mi.cvt_vsync_end;
+                        m_desktop_vtotal        = mi.cvt_vtotal;
+                        m_desktop_cvt_flags     = mi.cvt_flags;
+                        break;
+                    }
+                }
+
+                // Pass 2: preserve ALL custom modes the
+                // compositor advertises for this output, not
+                // just the desktop mode. The protocol's
+                // set_custom_modes is a *replacement* operation
+                // — without preserving every pre-existing
+                // custom mode, our first add_mode would wipe
+                // out custom modes the user set up via other
+                // tools (KDE display settings, a previous
+                // switchres run with keep_changes=true, another
+                // Wayland client). We re-send this full list on
+                // every rebuild, adding the user's own modes
+                // on top.
+                //
+                // Each captured entry is marked is_preserved
+                // so delete_mode() can't erase it (the user
+                // didn't add it via us, so they shouldn't be
+                // able to delete it via us either) and
+                // add_mode()'s duplicate-check doesn't bail
+                // out early when the user re-adds a mode that
+                // happens to match a preserved one.
+                for (const auto &mi : chosen->modes)
+                {
+                    if (!(mi.flags & 0x1)) continue;   // only custom modes
+
+                    custom_mode_entry entry;
+                    modeline_from_mode_info(&mi, &entry.ml);
+                    entry.is_preserved = true;
+                    m_custom_modes.push_back(entry);
+
+                    if (mi.proxy == m_desktop_mode)
+                        log_verbose("KDE: <%d> (init) desktop mode is custom, preserving\n", m_id);
+                    else
+                        log_verbose("KDE: <%d> (init) preserving pre-existing custom mode %ux%u@%.3f\n",
+                                    m_id, mi.width, mi.height, mi.refresh_mhz / 1000.0);
+                }
+            }
 			m_managed = 1;
 			detected = true;
 			log_verbose("KDE: <%d> (init) [SELECTED] output '%s' uuid=%s (desktop mode %p, %ux%u@%.3f)\n",
@@ -1295,18 +1321,25 @@ bool kde_timing::add_mode(modeline *mode)
 	}
 
 	// Bail if an identical custom mode is already registered.
-	for (const auto &e : m_custom_modes)
-	{
-		if (e.proxy &&
-		    e.ml.hactive == mode->hactive && e.ml.vactive == mode->vactive &&
-		    e.ml.pclock  == mode->pclock  && e.ml.htotal == mode->htotal &&
-		    e.ml.vtotal  == mode->vtotal)
-		{
-			log_error("KDE: <%d> (add_mode) [WARNING] mode already registered\n", m_id);
-			mode->platform_data = (uintptr_t)e.proxy;
-			return true;
-		}
-	}
+    // Skip is_preserved entries — we don't want a user's "add 600x500"
+    // to bail out early just because the compositor happened to be
+    // advertising a 600x500 custom mode that we captured at init. The
+    // user-added entry will live alongside the preserved one (the
+    // duplicate-check semantics are about "did WE already add this",
+    // not "does this already exist in the compositor's list").
+    for (const auto &e : m_custom_modes)
+    {
+        if (e.is_preserved) continue;
+        if (e.proxy &&
+            e.ml.hactive == mode->hactive && e.ml.vactive == mode->vactive &&
+            e.ml.pclock  == mode->pclock  && e.ml.htotal == mode->htotal &&
+            e.ml.vtotal  == mode->vtotal)
+        {
+            log_error("KDE: <%d> (add_mode) [WARNING] mode already registered\n", m_id);
+            mode->platform_data = (uintptr_t)e.proxy;
+            return true;
+        }
+    }
 
 	log_verbose("KDE: <%d> (add_mode) %dx%d@%.3f pclock=%llu\n",
 		    m_id, mode->hactive, mode->vactive, mode->vfreq,
@@ -1381,20 +1414,38 @@ bool kde_timing::delete_mode(modeline *mode)
 	}
 
 	// Find and remove the entry from our custom list.
-	bool found = false;
-	for (auto it = m_custom_modes.begin(); it != m_custom_modes.end(); ++it)
-	{
-		if (it->proxy == (kde_output_device_mode_v2 *)mode->platform_data)
-		{
-			m_custom_modes.erase(it);
-			found = true;
-			break;
-		}
-	}
-	if (!found)
-	{
-		log_error("KDE: <%d> (delete_mode) [WARNING] mode not in our custom list\n", m_id);
-	}
+    // Skip is_preserved entries — these are modes the compositor was
+    // advertising at init time (the desktop mode if it's custom, plus
+    // any other pre-existing custom modes). The user didn't add them
+    // via us, so they shouldn't be able to delete them via us either.
+    // Without this skip, the wrapper's deinit cleanup walking
+    // video_modes would erase preserved entries and the next rebuild
+    // would send a list missing them, causing the compositor to
+    // delete them — wiping out the user's pre-existing custom mode
+    // configuration (including potentially the desktop mode itself).
+    bool found = false;
+    for (auto it = m_custom_modes.begin(); it != m_custom_modes.end(); ++it)
+    {
+        if (it->is_preserved) continue;   // never delete preserved entries
+        if (it->proxy == (kde_output_device_mode_v2 *)mode->platform_data)
+        {
+            m_custom_modes.erase(it);
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+    {
+        // Nothing was erased — either the caller asked us to delete a
+        // native mode that was never in our custom list, or to delete
+        // a preserved entry (which we deliberately skip above). In
+        // either case the custom-mode list is unchanged, so sending
+        // set_custom_modes again would just make the compositor
+        // destroy and re-create every custom mode (proxy churn) for
+        // no reason. Skip the rebuild.
+        log_verbose("KDE: <%d> (delete_mode) mode not in our user-added custom list (skipped, no rebuild)\n", m_id);
+        return true;
+    }
 
 	bool ok = rebuild_custom_modes_and_apply();
 	if (ok)
