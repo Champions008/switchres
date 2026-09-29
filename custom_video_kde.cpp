@@ -317,74 +317,119 @@ void kde_timing::release_all_outputs()
 
 bool kde_timing::init()
 {
-	log_verbose("KDE: <%d> (init) waiting for compositor state to settle\n", m_id);
+    log_verbose("KDE: <%d> (init) waiting for compositor state to settle\n", m_id);
 
-	// Make sure initial output/mode events have been processed.
-	wl_display_roundtrip(m_display);
-	wl_display_roundtrip(m_display);
+    // Make sure initial output/mode events have been processed.
+    wl_display_roundtrip(m_display);
+    wl_display_roundtrip(m_display);
 
-	bool detected = false;
-	{
-		std::lock_guard<std::mutex> lock(m_mutex);
+    bool detected = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
 
-		log_verbose("KDE: <%d> (init) %d output(s) discovered\n",
-			    m_id, (int)m_outputs.size());
+        log_verbose("KDE: <%d> (init) %d output(s) discovered\n",
+                    m_id, (int)m_outputs.size());
 
-		// Diagnostic: print mode count for each output BEFORE selection
-		for (auto *out : m_outputs)
-		{
-			if (!out || !out->proxy) continue;
-			log_verbose("KDE: <%d> (init) output '%s' has %zu mode(s), enabled=%d, current_mode=%p\n",
-				m_id, out->name.c_str(), out->modes.size(),
-				(int)out->enabled, (void *)out->current_mode);
-			for (size_t i = 0; i < out->modes.size(); i++)
-			{
-				const auto &mi = out->modes[i];
-				log_verbose("KDE: <%d> (init)   [%zu] %p %ux%u@%.3f cvt=%d\n",
-					m_id, i, (void *)mi.proxy, mi.width, mi.height,
-					mi.refresh_mhz / 1000.0, mi.has_cvt ? 1 : 0);
-			}
-		}
+        // Diagnostic: print mode count for each output BEFORE selection
+        for (auto *out : m_outputs)
+        {
+            if (!out || !out->proxy) continue;
+            log_verbose("KDE: <%d> (init) output '%s' has %zu mode(s), enabled=%d, current_mode=%p\n",
+                m_id, out->name.c_str(), out->modes.size(),
+                (int)out->enabled, (void *)out->current_mode);
+            for (size_t i = 0; i < out->modes.size(); i++)
+            {
+                const auto &mi = out->modes[i];
+                log_verbose("KDE: <%d> (init)   [%zu] %p %ux%u@%.3f cvt=%d\n",
+                    m_id, i, (void *)mi.proxy, mi.width, mi.height,
+                    mi.refresh_mhz / 1000.0, mi.has_cvt ? 1 : 0);
+            }
+        }
 
-		kde_output *chosen = nullptr;
+        kde_output *chosen = nullptr;
 
-		for (auto *out : m_outputs)
-		{
-			if (!out || !out->proxy) continue;
+        // Parse the device name. Three forms are accepted, matching
+        // the xrandr backend's conventions:
+        //   - "auto"          : pick the first enabled output
+        //   - connector name  : e.g. "eDP-1", "DP-1", "HDMI-A-1"
+        //   - "screen0".."screen9" or "0".."9" : the Nth output by
+        //                       index (the switchres manager's
+        //                       display index as a string)
+        // The screen-position form is what groovy mame (and the
+        // switchres C wrapper's default) passes — without it, the
+        // KDE backend would fail with "no screen detected" whenever
+        // the caller doesn't explicitly use "auto" or a connector
+        // name.
+        int screen_pos = -1;
+        if (strlen(m_device_name) == 7 && !strncmp(m_device_name, "screen", 6) &&
+            m_device_name[6] >= '0' && m_device_name[6] <= '9')
+            screen_pos = m_device_name[6] - '0';
+        else if (strlen(m_device_name) == 1 && m_device_name[0] >= '0' && m_device_name[0] <= '9')
+            screen_pos = m_device_name[0] - '0';
 
-			log_verbose("KDE: <%d> (init) output '%s' uuid=%s enabled=%d modes=%d cap=0x%x\n",
-				    m_id, out->name.c_str(), out->uuid.c_str(),
-				    (int)out->enabled, (int)out->modes.size(), out->capabilities);
+        int output_position = 0;
+        for (auto *out : m_outputs)
+        {
+            if (!out || !out->proxy) continue;
 
-			if (out->name.empty())
-				continue;
+            log_verbose("KDE: <%d> (init) output '%s' uuid=%s enabled=%d modes=%d cap=0x%x\n",
+                        m_id, out->name.c_str(), out->uuid.c_str(),
+                        (int)out->enabled, (int)out->modes.size(), out->capabilities);
 
-			bool name_match = (!strcmp(m_device_name, "auto") ||
-					   !strcmp(m_device_name, out->name.c_str()));
-			if (name_match && out->enabled && out->current_mode)
-			{
-				if (!chosen || !strcmp(m_device_name, "auto"))
-				{
-					chosen = out;
-					if (strcmp(m_device_name, "auto"))
-						break;   // explicit match - done
-				}
-			}
-			else if (name_match)
-			{
-				// Match by name even if disabled; caller may want to enable it.
-				if (!chosen) chosen = out;
-			}
-		}
+            if (out->name.empty())
+                continue;
 
-		if (chosen)
-		{
-			m_desktop_output = chosen;
-			m_desktop_mode   = chosen->current_mode;   // snapshot for MODE_DESKTOP restore
-			// Cache the desktop mode's timing too — if the
-			// compositor destroys the proxy during set_custom_modes,
-			// we can find the mode again by matching width/height/refresh.
-			if (m_desktop_mode)
+            // Only count enabled outputs with a current mode toward
+            // output_position — mirrors xrandr's behaviour of only
+            // counting connected outputs with a crtc. This way
+            // "screen0" reliably picks the first *usable* output,
+            // not the first output that happens to be advertised
+            // (which might be disabled).
+            if (!out->enabled || !out->current_mode)
+                continue;
+
+            bool name_match = (!strcmp(m_device_name, "auto") ||
+                               !strcmp(m_device_name, out->name.c_str()) ||
+                               output_position == screen_pos);
+            if (name_match)
+            {
+                if (!chosen || !strcmp(m_device_name, "auto"))
+                {
+                    chosen = out;
+                    if (strcmp(m_device_name, "auto") && screen_pos < 0)
+                        break;   // explicit connector-name match - done
+                }
+            }
+            output_position++;
+        }
+
+        // If we didn't find an enabled match, fall back to the first
+        // name-matched output even if disabled — the caller may want
+        // to enable it later. This preserves the original behavior
+        // of matching by name for disabled outputs.
+        if (!chosen)
+        {
+            for (auto *out : m_outputs)
+            {
+                if (!out || !out->proxy) continue;
+                if (out->name.empty()) continue;
+                if (!strcmp(m_device_name, "auto") ||
+                    !strcmp(m_device_name, out->name.c_str()))
+                {
+                    chosen = out;
+                    break;
+                }
+            }
+        }
+
+        if (chosen)
+        {
+            m_desktop_output = chosen;
+            m_desktop_mode   = chosen->current_mode;   // snapshot for MODE_DESKTOP restore
+            // Cache the desktop mode's timing too — if the
+            // compositor destroys the proxy during set_custom_modes,
+            // we can find the mode again by matching width/height/refresh.
+            if (m_desktop_mode)
             {
                 // Pass 1: cache the desktop mode's CVT timing.
                 // Used by set_timing(MODE_DESKTOP) as a fallback
@@ -448,19 +493,19 @@ bool kde_timing::init()
                                     m_id, mi.width, mi.height, mi.refresh_mhz / 1000.0);
                 }
             }
-			m_managed = 1;
-			detected = true;
-			log_verbose("KDE: <%d> (init) [SELECTED] output '%s' uuid=%s (desktop mode %p, %ux%u@%.3f)\n",
-				     m_id, chosen->name.c_str(), chosen->uuid.c_str(),
-				     (void *)m_desktop_mode, m_desktop_width, m_desktop_height,
-				     m_desktop_refresh_mhz / 1000.0);
-		}
-	}
+            m_managed = 1;
+            detected = true;
+            log_verbose("KDE: <%d> (init) [SELECTED] output '%s' uuid=%s (desktop mode %p, %ux%u@%.3f)\n",
+                         m_id, chosen->name.c_str(), chosen->uuid.c_str(),
+                         (void *)m_desktop_mode, m_desktop_width, m_desktop_height,
+                         m_desktop_refresh_mhz / 1000.0);
+        }
+    }
 
-	if (!detected)
-		log_error("KDE: <%d> (init) [ERROR] no screen detected\n", m_id);
+    if (!detected)
+        log_error("KDE: <%d> (init) [ERROR] no screen detected\n", m_id);
 
-	return detected;
+    return detected;
 }
 
 // =========================================================================
