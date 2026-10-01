@@ -414,33 +414,12 @@ bool wlroots_timing::init()
 }
 
 // =========================================================================
-//  dispatch_loop
-//  Single-threaded design: this is a no-op placeholder (matches the KDE
-//  backend). Every public method drives event dispatch via
-//  wl_display_roundtrip from the calling thread, so a separate thread
-//  is not needed for correctness. If hot-plug responsiveness becomes
-//  important, re-enable this by starting the thread in the constructor
-//  and using wl_display_dispatch here. You then MUST NOT call
-//  wl_display_roundtrip from public methods (use wl_display_dispatch_pending
-//  + the condition variable instead).
+//  pump_until_apply_done (single-threaded)
+//  We drive event dispatch from the calling thread via wl_display_roundtrip.
+//  This matches the xrandr/KDE backend's blocking model: the caller blocks
+//  until the compositor responds. No background thread, no condition
+//  variable, no races.
 // =========================================================================
-
-void wlroots_timing::dispatch_loop()
-{
-	// Intentionally empty in the single-threaded design.
-}
-
-// =========================================================================
-//  pump helpers (single-threaded)
-// =========================================================================
-
-void wlroots_timing::pump_events()
-{
-	// Drain pending events + one roundtrip to ensure the cache reflects
-	// any state changes the compositor has sent since the last call.
-	wl_display_dispatch_pending(m_display);
-	wl_display_roundtrip(m_display);
-}
 
 bool wlroots_timing::pump_until_apply_done()
 {
@@ -895,7 +874,6 @@ void wlroots_timing::cfg_succeeded(void *data,
 	self->m_apply_done      = true;
 	self->m_apply_ok        = true;
 	self->m_apply_cancelled = false;
-	self->m_apply_cv.notify_one();
 	log_verbose("WLROOTS: <%d> (cfg_succeeded) configuration applied\n", self->m_id);
 }
 
@@ -907,7 +885,6 @@ void wlroots_timing::cfg_failed(void *data,
 	self->m_apply_done      = true;
 	self->m_apply_ok        = false;
 	self->m_apply_cancelled = false;
-	self->m_apply_cv.notify_one();
 	log_verbose("WLROOTS: <%d> (cfg_failed) configuration rejected\n", self->m_id);
 }
 
@@ -925,7 +902,6 @@ void wlroots_timing::cfg_cancelled(void *data,
 	self->m_apply_done      = true;
 	self->m_apply_ok        = false;
 	self->m_apply_cancelled = true;
-	self->m_apply_cv.notify_one();
 	log_verbose("WLROOTS: <%d> (cfg_cancelled) serial was stale\n", self->m_id);
 }
 

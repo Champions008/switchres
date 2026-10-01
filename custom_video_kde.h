@@ -42,10 +42,7 @@
 
 #include <vector>
 #include <string>
-#include <thread>
 #include <mutex>
-#include <condition_variable>
-#include <atomic>
 #include <cstdint>
 
 // Wayland core client header (system-installed, found via pkg-config)
@@ -328,16 +325,14 @@ private:
 	bool        m_apply_ok           = false;
 	std::string m_apply_failure_reason;
 
-	// ---- background dispatch thread ----
-	// Keeps the output/mode cache up-to-date between synchronous calls
-	// and is also what drains events while we wait for an apply() to
-	// finish. We use a separate thread because wl_display_dispatch is
-	// blocking; running it on the caller's thread would serialize
-	// every switchres operation against the compositor's event loop.
-	std::thread             m_dispatch_thread;
-	std::mutex              m_mutex;
-	std::condition_variable m_apply_cv;
-	std::atomic<bool>       m_running{false};
+	// ---- synchronization ----
+    // m_mutex protects the output/mode cache (m_outputs, m_custom_modes,
+    // m_desktop_mode, etc.) from re-entrancy during wl_display_roundtrip.
+    // A roundtrip can dispatch multiple events, and listener callbacks
+    // take this lock to update the cache. In the single-threaded design
+    // the lock is uncontended, but it keeps the code thread-safe if a
+    // dispatch thread is ever added.
+    std::mutex              m_mutex;
 
 	// ---- helpers ----
 	void   release_all_outputs();
@@ -361,9 +356,6 @@ private:
 	    kde_timing *self, kde_output_device_v2 *proxy);
 	static kde_mode_info *find_mode_info_locked(
 	    kde_timing *self, kde_output_device_mode_v2 *proxy);
-
-	// dispatch thread entry point
-	void dispatch_loop();
 };
 
 #endif

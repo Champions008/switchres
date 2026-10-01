@@ -19,12 +19,12 @@
    Threading model
    ---------------
    Wayland is asynchronous; switchres' custom_video API is synchronous.
-   We bridge the two with a background "dispatch" thread that owns
-   wl_display_dispatch() (only one thread may dispatch a given wl_display
-   at a time). All listener callbacks run on that thread and serialise
-   on m_mutex. Public API methods send wire requests (thread-safe),
-   flush the display, then wait on m_apply_cv for the dispatch thread
-   to flip m_apply_done from a configuration listener.
+   We bridge the two with a single-threaded design: every public API
+   method sends wire requests, then calls wl_display_roundtrip() on the
+   caller's thread to block until the compositor responds. All listener
+   callbacks run on the calling thread during the roundtrip and serialise
+   on m_mutex (uncontended in practice, but kept for thread-safety if a
+   dispatch thread is ever added).
 
  **************************************************************/
 
@@ -509,39 +509,14 @@ bool kde_timing::init()
 }
 
 // =========================================================================
-//  dispatch_loop
-//  Single-threaded design: this is a no-op placeholder. The original
-//  plan called for a background dispatch thread, but in practice every
-//  public method already drives event dispatch via wl_display_roundtrip,
-//  so a separate thread is not needed for correctness. If hot-plug
-//  responsiveness becomes important, re-enable this by starting the
-//  thread in the constructor and using wl_display_dispatch here. Note
-//  that you then MUST NOT call wl_display_roundtrip from public methods
-//  (use wl_display_dispatch_pending + a condition variable instead).
-// =========================================================================
-
-void kde_timing::dispatch_loop()
-{
-	// Intentionally empty in the single-threaded design.
-}
-
-// =========================================================================
-//  pump helpers (single-threaded)
+//  pump_until_apply_done (single-threaded)
 //  We drive event dispatch from the calling thread via wl_display_roundtrip.
 //  This matches the xrandr backend's blocking XSync model: the caller blocks
-//  until the compositor responds. No background thread, no condition variable,
-//  no races. The mutex members remain in the class for the listener thunks'
-//  lock_guards (which are uncontended here but keep the code thread-safe if
-//  a dispatch thread is added later).
+//  until the compositor responds. No background thread, no condition
+//  variable, no races. The mutex members remain in the class for the
+//  listener thunks' lock_guards (which are uncontended here but keep the
+//  code thread-safe if a dispatch thread is added later).
 // =========================================================================
-
-void kde_timing::pump_events()
-{
-	// Drain pending events + one roundtrip to ensure the cache reflects
-	// any state changes the compositor has sent since the last call.
-	wl_display_dispatch_pending(m_display);
-	wl_display_roundtrip(m_display);
-}
 
 bool kde_timing::pump_until_apply_done()
 {
@@ -1043,7 +1018,6 @@ void kde_timing::cfg_applied(void *data, kde_output_configuration_v2 * /*cfg*/)
 	std::lock_guard<std::mutex> lock(self->m_mutex);
 	self->m_apply_done = true;
 	self->m_apply_ok   = true;
-	self->m_apply_cv.notify_one();
 	log_verbose("KDE: <%d> (cfg_applied) configuration applied\n", self->m_id);
 }
 
@@ -1053,7 +1027,6 @@ void kde_timing::cfg_failed(void *data, kde_output_configuration_v2 * /*cfg*/)
 	std::lock_guard<std::mutex> lock(self->m_mutex);
 	self->m_apply_done = true;
 	self->m_apply_ok   = false;
-	self->m_apply_cv.notify_one();
 	log_verbose("KDE: <%d> (cfg_failed) configuration rejected\n", self->m_id);
 }
 

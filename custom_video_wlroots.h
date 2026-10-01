@@ -63,10 +63,7 @@
 
 #include <vector>
 #include <string>
-#include <thread>
 #include <mutex>
-#include <condition_variable>
-#include <atomic>
 #include <cstdint>
 
 // Wayland core client header (system-installed, found via pkg-config)
@@ -273,20 +270,18 @@ private:
 	bool        m_apply_cancelled    = false;  // serial was stale
 	std::string m_apply_failure_reason;
 
-	// ---- background dispatch thread ----
-	// Single-threaded design: kept for parity with the KDE backend but
-	// unused. Every public method drives event dispatch via
-	// wl_display_roundtrip from the calling thread. If a dispatch thread
-	// is added later, the mutex/cv keep the listener thunks thread-safe.
-	std::thread             m_dispatch_thread;
-	std::mutex              m_mutex;
-	std::condition_variable m_apply_cv;
-	std::atomic<bool>       m_running{false};
+	// ---- synchronization ----
+    // m_mutex protects the output/mode cache (m_outputs, m_custom_modes,
+    // m_desktop_mode, etc.) from re-entrancy during wl_display_roundtrip.
+    // A roundtrip can dispatch multiple events, and listener callbacks
+    // take this lock to update the cache. In the single-threaded design
+    // the lock is uncontended, but it keeps the code thread-safe if a
+    // dispatch thread is ever added.
+    std::mutex              m_mutex;
 
 	// ---- helpers ----
 	void   release_all_outputs();
 
-	void   pump_events();
 	bool   pump_until_apply_done();
 
 	bool   find_output_by_name(const char *name, wlroots_output *&out);
@@ -311,9 +306,6 @@ private:
 	    wlroots_timing *self, zwlr_output_head_v1 *proxy);
 	static wlroots_mode_info *find_mode_info_locked(
 	    wlroots_timing *self, zwlr_output_mode_v1 *proxy);
-
-	// dispatch thread entry point (no-op in single-threaded design)
-	void dispatch_loop();
 };
 
 #endif
