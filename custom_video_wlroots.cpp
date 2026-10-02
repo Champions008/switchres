@@ -1306,160 +1306,219 @@ bool wlroots_timing::update_mode(modeline *mode)
 
 bool wlroots_timing::set_timing(modeline *mode)
 {
-	if (!mode) return false;
-	if (!m_desktop_output)
-	{
-		log_error("WLROOTS: <%d> (set_timing) [ERROR] no screen detected\n", m_id);
-		return false;
-	}
-	if (!m_managed)
-	{
-		log_error("WLROOTS: <%d> (set_timing) [WARNING] this screen is not managed by us\n", m_id);
-		return false;
-	}
+    if (!mode) return false;
+    if (!m_desktop_output)
+    {
+        log_error("WLROOTS: <%d> (set_timing) [ERROR] no screen detected\n", m_id);
+        return false;
+    }
+    if (!m_managed)
+    {
+        log_error("WLROOTS: <%d> (set_timing) [WARNING] this screen is not managed by us\n", m_id);
+        return false;
+    }
 
-	zwlr_output_mode_v1 *target = nullptr;
-	int custom_w = 0, custom_h = 0, custom_refresh_mhz = 0;
+    zwlr_output_mode_v1 *target = nullptr;
+    int custom_w = 0, custom_h = 0, custom_refresh_mhz = 0;
 
-	if (mode->type & MODE_DESKTOP)
-	{
-		// Restore the desktop mode = the mode that was current at init()
-		// time. We snapshotted it into m_desktop_mode so that switching
-		// to custom modes in between doesn't lose the original. This
-		// mirrors the xrandr/KDE backends' m_desktop_mode handling.
-		std::lock_guard<std::mutex> lock(m_mutex);
-		target = m_desktop_mode;
-		if (!target)
-		{
-			// The desktop mode proxy was destroyed (e.g. by the
-			// compositor garbage-collecting it after a finished event).
-			// Try to find it again in the current mode list by matching
-			// the cached width/height/refresh.
-			if (m_desktop_output && (m_desktop_width || m_desktop_height))
-			{
-				log_verbose("WLROOTS: <%d> (set_timing) desktop mode proxy gone, searching by %ux%u@%.3f\n",
-					    m_id, m_desktop_width, m_desktop_height,
-					    m_desktop_refresh_mhz / 1000.0);
-				for (const auto &mi : m_desktop_output->modes)
-				{
-					if (mi.width == m_desktop_width &&
-					    mi.height == m_desktop_height &&
-					    mi.refresh_mhz == m_desktop_refresh_mhz)
-					{
-						target = mi.proxy;
-						log_verbose("WLROOTS: <%d> (set_timing) found desktop mode by w/h/r: %p\n",
-							    m_id, (void *)target);
-						break;
-					}
-				}
-			}
-			if (!target)
-			{
-				// Last resort: fall back to the live current mode
-				// (which is whatever we last switched to).
-				target = m_desktop_output ? m_desktop_output->current_mode : nullptr;
-			}
-		}
-		if (!target)
-		{
-			log_error("WLROOTS: <%d> (set_timing) [ERROR] no desktop mode to restore\n", m_id);
-			return false;
-		}
-	}
-	else
-	{
-		target = (zwlr_output_mode_v1 *)mode->platform_data;
-		if (target)
-		{
-			// Verify the proxy is still advertised.
-			if (!find_mode_by_proxy(target))
-			{
-				log_verbose("WLROOTS: <%d> (set_timing) proxy %p not in current list, searching by id=%d w=%d h=%d r=%d\n",
-					m_id, (void *)target, mode->id, mode->width, mode->height, mode->refresh);
-				target = nullptr;   // fall through to search
-			}
-		}
-		if (!target)
-		{
-			// platform_data == 0 means this is a custom mode that
-			// was registered via add_mode(). Skip the advertised
-			// mode list search entirely — custom modes are NOT
-			// in the compositor's mode list. Go directly to
-			// our custom mode cache.
-			if (mode->platform_data != 0)
-			{
-				// The proxy was stale. Try to find an
-				// advertised mode matching by id, then by
-				// width/height/refresh.
-				if (m_desktop_output)
-				{
-					std::lock_guard<std::mutex> lock(m_mutex);
-					for (const auto &mi : m_desktop_output->modes)
-					{
-						// Try id match first
-						if (mode->id != 0 && mi.id == mode->id)
-						{
-							target = mi.proxy;
-							log_verbose("WLROOTS: <%d> (set_timing) found mode by id=%d: %p\n",
-								m_id, mi.id, (void *)target);
-							break;
-						}
-						// Fall back to width/height/refresh
-						if (mi.width == (uint32_t)mode->width &&
-						    mi.height == (uint32_t)mode->height &&
-						    (int)(mi.refresh_mhz / 1000) == (int)mode->refresh)
-						{
-							target = mi.proxy;
-							log_verbose("WLROOTS: <%d> (set_timing) found mode by w/h/r: %p\n",
-								m_id, (void *)target);
-							break;
-						}
-					}
-				}
-			}
-		}
-		if (!target)
-		{
-			// Not in the advertised list - treat as a custom mode.
-			// Look it up in our custom cache to get the exact
-			// width/height/refresh (which may differ slightly from
-			// what switchres passes in if the modeline was regenerated).
-			custom_mode_entry *e = find_custom_mode_for(mode);
-			if (e)
-			{
-				custom_w = e->ml.width;
-				custom_h = e->ml.height;
-				custom_refresh_mhz = (int)(e->ml.vfreq * 1000.0);
-			}
-			else
-			{
-				// Last resort: use the mode's own width/height/refresh.
-				custom_w = mode->width;
-				custom_h = mode->height;
-				custom_refresh_mhz = (int)(mode->vfreq * 1000.0);
-			}
-			if (custom_w == 0 || custom_h == 0)
-			{
-				log_error("WLROOTS: <%d> (set_timing) [ERROR] custom mode has no resolution\n", m_id);
-				return false;
-			}
-		}
-	}
+    if (mode->type & MODE_DESKTOP)
+    {
+        // Restore the desktop mode = the mode that was current at init()
+        // time. We snapshotted it into m_desktop_mode so that switching
+        // to custom modes in between doesn't lose the original. This
+        // mirrors the xrandr/KDE backends' m_desktop_mode handling.
+        std::lock_guard<std::mutex> lock(m_mutex);
+        target = m_desktop_mode;
 
-	log_verbose("WLROOTS: <%d> (set_timing) %s %s (%dx%d@%d mHz)\n",
-		m_id, target ? "set_mode" : "set_custom_mode",
-		target ? "" : "custom",
-		target ? 0 : custom_w, target ? 0 : custom_h,
-		target ? 0 : custom_refresh_mhz);
+        // Check if the desktop mode proxy is still in the compositor's
+        // advertised list AND still has the same dimensions as the
+        // desktop mode we captured at init. If the desktop mode was
+        // itself a custom mode (e.g. set via sway's
+        // `output <name> mode <w>x<h>@<r>` config), the compositor may
+        // have either:
+        //   (a) removed the proxy from the advertised list after we
+        //       switched to a different custom mode via set_custom_mode,
+        //       or
+        //   (b) reused the same proxy object and updated its size/refresh
+        //       events to reflect the new mode (sway does this).
+        // In either case, set_mode(stale_proxy) would not restore the
+        // original desktop mode — we need to use set_custom_mode(w, h,
+        // refresh) with the cached desktop dimensions from init.
+        if (target)
+        {
+            wlroots_mode_info *mi = find_mode_info_locked(this, target);
+            if (!mi)
+            {
+                log_verbose("WLROOTS: <%d> (set_timing) desktop mode proxy %p no longer advertised, will use set_custom_mode\n",
+                    m_id, (void *)target);
+                target = nullptr;
+            }
+            else if (m_desktop_width && m_desktop_height &&
+                (mi->width  != m_desktop_width ||
+                 mi->height != m_desktop_height ||
+                 mi->refresh_mhz != m_desktop_refresh_mhz))
+            {
+                log_verbose("WLROOTS: <%d> (set_timing) desktop mode proxy %p still advertised but dimensions changed (now %ux%u@%.3f, was %ux%u@%.3f), will use set_custom_mode\n",
+                    m_id, (void *)target,
+                    mi->width, mi->height, mi->refresh_mhz / 1000.0,
+                    m_desktop_width, m_desktop_height,
+                    m_desktop_refresh_mhz / 1000.0);
+                target = nullptr;
+            }
+        }
 
-	bool ok = apply_configuration_for_mode(target,
-					       custom_w, custom_h, custom_refresh_mhz,
-					       m_desktop_output->x,
-					       m_desktop_output->y,
-					       m_desktop_output->transform);
-	if (ok)
-		log_verbose("WLROOTS: <%d> (set_timing) applied\n", m_id);
-	return ok;
+        if (!target)
+        {
+            // The desktop mode proxy was destroyed (e.g. by the
+            // compositor garbage-collecting it after a finished event)
+            // or was a custom mode that's no longer advertised, or was
+            // a custom mode whose proxy got reused for a different
+            // resolution. Try to find a mode in the current advertised
+            // list matching the cached desktop width/height/refresh.
+            if (m_desktop_output && (m_desktop_width || m_desktop_height))
+            {
+                log_verbose("WLROOTS: <%d> (set_timing) desktop mode proxy gone, searching by %ux%u@%.3f\n",
+                      m_id, m_desktop_width, m_desktop_height,
+                      m_desktop_refresh_mhz / 1000.0);
+                for (const auto &mi : m_desktop_output->modes)
+                {
+                    if (mi.width == m_desktop_width &&
+                      mi.height == m_desktop_height &&
+                      mi.refresh_mhz == m_desktop_refresh_mhz)
+                    {
+                        target = mi.proxy;
+                        log_verbose("WLROOTS: <%d> (set_timing) found desktop mode by w/h/r: %p\n",
+                              m_id, (void *)target);
+                        break;
+                    }
+                }
+            }
+            if (!target)
+            {
+                // The desktop mode is not in the advertised list. If
+                // we have cached dimensions, use set_custom_mode to
+                // restore it. This handles the case where the desktop
+                // mode was a custom mode that the compositor removed
+                // or repurposed after we switched away from it.
+                if (m_desktop_width && m_desktop_height)
+                {
+                    custom_w = m_desktop_width;
+                    custom_h = m_desktop_height;
+                    custom_refresh_mhz = m_desktop_refresh_mhz;
+                    log_verbose("WLROOTS: <%d> (set_timing) restoring desktop via set_custom_mode %ux%u@%.3f\n",
+                          m_id, custom_w, custom_h,
+                          custom_refresh_mhz / 1000.0);
+                    // target stays null — apply_configuration_for_mode
+                    // will use set_custom_mode instead of set_mode.
+                }
+                else
+                {
+                    // Last resort: fall back to the live current mode
+                    // (which is whatever we last switched to).
+                    target = m_desktop_output ? m_desktop_output->current_mode : nullptr;
+                }
+            }
+        }
+        if (!target && !custom_w && !custom_h)
+        {
+            log_error("WLROOTS: <%d> (set_timing) [ERROR] no desktop mode to restore\n", m_id);
+            return false;
+        }
+    }
+    else
+    {
+        target = (zwlr_output_mode_v1 *)mode->platform_data;
+        if (target)
+        {
+            // Verify the proxy is still advertised.
+            if (!find_mode_by_proxy(target))
+            {
+                log_verbose("WLROOTS: <%d> (set_timing) proxy %p not in current list, searching by id=%d w=%d h=%d r=%d\n",
+                    m_id, (void *)target, mode->id, mode->width, mode->height, mode->refresh);
+                target = nullptr;   // fall through to search
+            }
+        }
+        if (!target)
+        {
+            // platform_data == 0 means this is a custom mode that
+            // was registered via add_mode(). Skip the advertised
+            // mode list search entirely — custom modes are NOT
+            // in the compositor's mode list. Go directly to
+            // our custom mode cache.
+            if (mode->platform_data != 0)
+            {
+                // The proxy was stale. Try to find an
+                // advertised mode matching by id, then by
+                // width/height/refresh.
+                if (m_desktop_output)
+                {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    for (const auto &mi : m_desktop_output->modes)
+                    {
+                        // Try id match first
+                        if (mode->id != 0 && mi.id == mode->id)
+                        {
+                            target = mi.proxy;
+                            log_verbose("WLROOTS: <%d> (set_timing) found mode by id=%d: %p\n",
+                                m_id, mi.id, (void *)target);
+                            break;
+                        }
+                        // Fall back to width/height/refresh
+                        if (mi.width == (uint32_t)mode->width &&
+                          mi.height == (uint32_t)mode->height &&
+                          (int)(mi.refresh_mhz / 1000) == (int)mode->refresh)
+                        {
+                            target = mi.proxy;
+                            log_verbose("WLROOTS: <%d> (set_timing) found mode by w/h/r: %p\n",
+                                m_id, (void *)target);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (!target)
+        {
+            // Not in the advertised list - treat as a custom mode.
+            // Look it up in our custom cache to get the exact
+            // width/height/refresh (which may differ slightly from
+            // what switchres passes in if the modeline was regenerated).
+            custom_mode_entry *e = find_custom_mode_for(mode);
+            if (e)
+            {
+                custom_w = e->ml.width;
+                custom_h = e->ml.height;
+                custom_refresh_mhz = (int)(e->ml.vfreq * 1000.0);
+            }
+            else
+            {
+                // Last resort: use the mode's own width/height/refresh.
+                custom_w = mode->width;
+                custom_h = mode->height;
+                custom_refresh_mhz = (int)(mode->vfreq * 1000.0);
+            }
+            if (custom_w == 0 || custom_h == 0)
+            {
+                log_error("WLROOTS: <%d> (set_timing) [ERROR] custom mode has no resolution\n", m_id);
+                return false;
+            }
+        }
+    }
+
+    log_verbose("WLROOTS: <%d> (set_timing) %s %s (%dx%d@%d mHz)\n",
+        m_id, target ? "set_mode" : "set_custom_mode",
+        target ? "" : "custom",
+        target ? 0 : custom_w, target ? 0 : custom_h,
+        target ? 0 : custom_refresh_mhz);
+
+    bool ok = apply_configuration_for_mode(target,
+                        custom_w, custom_h, custom_refresh_mhz,
+                        m_desktop_output->x,
+                        m_desktop_output->y,
+                        m_desktop_output->transform);
+    if (ok)
+        log_verbose("WLROOTS: <%d> (set_timing) applied\n", m_id);
+    return ok;
 }
 
 // =========================================================================
