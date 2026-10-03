@@ -1666,46 +1666,61 @@ bool kde_timing::set_timing(modeline *mode)
 
 bool kde_timing::get_timing(modeline *mode)
 {
-	if (!m_desktop_output)
-	{
-		log_error("KDE: <%d> (get_timing) [ERROR] no screen detected\n", m_id);
-		return false;
-	}
+    if (!m_desktop_output)
+    {
+        log_error("KDE: <%d> (get_timing) [ERROR] no screen detected\n", m_id);
+        return false;
+    }
 
-	std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-	if (!m_desktop_output)
-	{
-		log_error("KDE: <%d> (get_timing) [ERROR] desktop output lost\n", m_id);
-		return false;
-	}
+    log_verbose("KDE: <%d> (get_timing) position=%d, mode count=%zu\n",
+        m_id, m_video_modes_position, m_desktop_output->modes.size());
 
-	// Raw fprintf for debugging (bypasses switchres log system)
-	log_verbose("KDE: <%d> (get_timing) position=%d, mode count=%zu\n",
-		m_id, m_video_modes_position, m_desktop_output->modes.size());
+    if ((size_t)m_video_modes_position < m_desktop_output->modes.size())
+    {
+        const kde_mode_info &mi = m_desktop_output->modes[m_video_modes_position];
+        memset(mode, 0, sizeof(*mode));
+        modeline_from_mode_info(&mi, mode);
 
-	if ((size_t)m_video_modes_position < m_desktop_output->modes.size())
-	{
-		const kde_mode_info &mi = m_desktop_output->modes[m_video_modes_position];
-		memset(mode, 0, sizeof(*mode));
-		modeline_from_mode_info(&mi, mode);
+        // Tag the desktop mode. We can't rely on the proxy pointer
+        // alone — set_custom_modes destroys and re-creates all mode
+        // proxies (native and custom), so m_desktop_mode becomes stale
+        // after the first add_mode. Match by the cached desktop CVT or
+        // w/h/refresh, which are stable across set_custom_modes.
+        bool is_desktop = (m_desktop_mode == mi.proxy);
+        if (!is_desktop && m_desktop_width && m_desktop_height && mi.has_cvt)
+        {
+            bool cvt_match = (mi.cvt_dot_clock_khz == m_desktop_dot_clock_khz &&
+                mi.cvt_hsync_start == m_desktop_hsync_start &&
+                mi.cvt_hsync_end  == m_desktop_hsync_end &&
+                mi.cvt_htotal     == m_desktop_htotal &&
+                mi.cvt_vsync_start == m_desktop_vsync_start &&
+                mi.cvt_vsync_end  == m_desktop_vsync_end &&
+                mi.cvt_vtotal     == m_desktop_vtotal &&
+                mi.cvt_flags      == m_desktop_cvt_flags);
 
-		// Tag the desktop mode if this is the current one.
-		if (m_desktop_output->current_mode == mi.proxy)
-			mode->type |= MODE_DESKTOP;
+            bool whr_match = (mi.width == m_desktop_width &&
+                mi.height == m_desktop_height &&
+                mi.refresh_mhz == m_desktop_refresh_mhz);
 
-		log_verbose("KDE: <%d> (get_timing) returning mode %p %ux%u@%.3f type=0x%x\n",
-			m_id, (void *)mi.proxy, mi.width, mi.height,
-			mi.refresh_mhz / 1000.0, mode->type);
-		m_video_modes_position++;
-	}
-	else
-	{
-		// List exhausted; reset the cursor (mirrors xrandr's behaviour).
-		log_verbose("KDE: <%d> (get_timing) list exhausted, resetting cursor\n", m_id);
-		m_video_modes_position = 0;
-	}
-	return true;
+            is_desktop = cvt_match || whr_match;
+        }
+        if (is_desktop)
+            mode->type |= MODE_DESKTOP;
+
+        log_verbose("KDE: <%d> (get_timing) returning mode %p %ux%u@%.3f type=0x%x\n",
+            m_id, (void *)mi.proxy, mi.width, mi.height,
+            mi.refresh_mhz / 1000.0, mode->type);
+        m_video_modes_position++;
+    }
+    else
+    {
+        // List exhausted; reset the cursor (mirrors xrandr's behaviour).
+        log_verbose("KDE: <%d> (get_timing) list exhausted, resetting cursor\n", m_id);
+        m_video_modes_position = 0;
+    }
+    return true;
 }
 
 // =========================================================================

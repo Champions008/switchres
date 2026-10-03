@@ -1524,69 +1524,77 @@ bool wlroots_timing::set_timing(modeline *mode)
 // =========================================================================
 //  get_timing
 //  Iterates the desktop output's advertised modes first, then our cached
-//  custom modes. The cursor (m_video_modes_position) walks the combined
-//  list; when it runs off the end, it resets to 0 (mirrors xrandr's
-//  behaviour). For advertised modes we return only width/height/refresh
-//  (the wlroots protocol doesn't expose CVT timings). For our custom
-//  modes we return the full modeline switchres generated.
+//  custom modes (wlroots custom modes are ephemeral, not in the
+//  compositor's list). For advertised modes we return only w/h/refresh
+//  (the protocol doesn't expose CVT). For custom modes we return the
+//  full modeline switchres generated.
 // =========================================================================
 
 bool wlroots_timing::get_timing(modeline *mode)
 {
-	if (!m_desktop_output)
-	{
-		log_error("WLROOTS: <%d> (get_timing) [ERROR] no screen detected\n", m_id);
-		return false;
-	}
+    if (!m_desktop_output)
+    {
+        log_error("WLROOTS: <%d> (get_timing) [ERROR] no screen detected\n", m_id);
+        return false;
+    }
 
-	std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-	if (!m_desktop_output)
-	{
-		log_error("WLROOTS: <%d> (get_timing) [ERROR] desktop output lost\n", m_id);
-		return false;
-	}
+    int advertised_count = (int)m_desktop_output->modes.size();
 
-	int advertised_count = (int)m_desktop_output->modes.size();
+    log_verbose("WLROOTS: <%d> (get_timing) position=%d, advertised=%d, custom=%zu\n",
+        m_id, m_video_modes_position, advertised_count, m_custom_modes.size());
 
-	log_verbose("WLROOTS: <%d> (get_timing) position=%d, advertised=%d, custom=%zu\n",
-		m_id, m_video_modes_position, advertised_count, m_custom_modes.size());
+    if (m_video_modes_position < advertised_count)
+    {
+        // Advertised mode.
+        const wlroots_mode_info &mi = m_desktop_output->modes[m_video_modes_position];
+        memset(mode, 0, sizeof(*mode));
+        modeline_from_mode_info(&mi, mode);
 
-	if (m_video_modes_position < advertised_count)
-	{
-		// Advertised mode.
-		const wlroots_mode_info &mi = m_desktop_output->modes[m_video_modes_position];
-		memset(mode, 0, sizeof(*mode));
-		modeline_from_mode_info(&mi, mode);
+        // Tag the desktop mode. Proxy alone isn't enough — sway can
+        // reuse the same proxy with different dimensions, and KDE's
+        // set_custom_modes re-creates all proxies. Match by the cached
+        // desktop w/h/refresh, which are stable across mode switches.
+        // (wlroots doesn't expose CVT, so w/h/r is the most precise
+        // comparison available.)
+        bool proxy_and_dims_match = (m_desktop_mode == mi.proxy &&
+            mi.width == m_desktop_width &&
+            mi.height == m_desktop_height &&
+            mi.refresh_mhz == m_desktop_refresh_mhz);
 
-		// Tag the desktop mode if this is the current one.
-		if (m_desktop_output->current_mode == mi.proxy)
-			mode->type |= MODE_DESKTOP;
+        bool dims_match = (m_desktop_width && m_desktop_height &&
+            mi.width == m_desktop_width &&
+            mi.height == m_desktop_height &&
+            mi.refresh_mhz == m_desktop_refresh_mhz);
 
-		log_verbose("WLROOTS: <%d> (get_timing) returning advertised mode %p %ux%u@%.3f type=0x%x\n",
-			m_id, (void *)mi.proxy, mi.width, mi.height,
-			mi.refresh_mhz / 1000.0, mode->type);
-		m_video_modes_position++;
-	}
-	else if ((m_video_modes_position - advertised_count) < (int)m_custom_modes.size())
-	{
-		// Custom mode from our cache.
-		int idx = m_video_modes_position - advertised_count;
-		const custom_mode_entry &e = m_custom_modes[idx];
-		memset(mode, 0, sizeof(*mode));
-		modeline_from_custom_entry(&e, mode);
+        if (proxy_and_dims_match || dims_match)
+            mode->type |= MODE_DESKTOP;
 
-		log_verbose("WLROOTS: <%d> (get_timing) returning custom mode %dx%d@%.3f type=0x%x\n",
-			m_id, mode->width, mode->height, mode->vfreq, mode->type);
-		m_video_modes_position++;
-	}
-	else
-	{
-		// List exhausted; reset the cursor (mirrors xrandr's behaviour).
-		log_verbose("WLROOTS: <%d> (get_timing) list exhausted, resetting cursor\n", m_id);
-		m_video_modes_position = 0;
-	}
-	return true;
+        log_verbose("WLROOTS: <%d> (get_timing) returning advertised mode %p %ux%u@%.3f type=0x%x\n",
+            m_id, (void *)mi.proxy, mi.width, mi.height,
+            mi.refresh_mhz / 1000.0, mode->type);
+        m_video_modes_position++;
+    }
+    else if ((m_video_modes_position - advertised_count) < (int)m_custom_modes.size())
+    {
+        // Custom mode from our cache.
+        int idx = m_video_modes_position - advertised_count;
+        const custom_mode_entry &e = m_custom_modes[idx];
+        memset(mode, 0, sizeof(*mode));
+        modeline_from_custom_entry(&e, mode);
+
+        log_verbose("WLROOTS: <%d> (get_timing) returning custom mode %dx%d@%.3f type=0x%x\n",
+            m_id, mode->width, mode->height, mode->vfreq, mode->type);
+        m_video_modes_position++;
+    }
+    else
+    {
+        // List exhausted; reset the cursor (mirrors xrandr's behaviour).
+        log_verbose("WLROOTS: <%d> (get_timing) list exhausted, resetting cursor\n", m_id);
+        m_video_modes_position = 0;
+    }
+    return true;
 }
 
 // =========================================================================
